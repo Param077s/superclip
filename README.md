@@ -11,7 +11,7 @@ Copy a table out of a PDF. Paste it into Numbers and you get real cells; into
 Slack and you get readable lines; into a code editor and you get an array
 literal. One copy, three correct outputs, and you never picked a format.
 
-> **Status: early.** The app builds, runs, and holds all eight of its bindings.
+> **Status: early.** The app builds, runs, and holds all nine of its bindings.
 > The parts that talk to the model, and the parts that need macOS permissions,
 > are written but have not yet been exercised against real apps. See
 > [Status](#status) before relying on any of it.
@@ -30,6 +30,7 @@ literal. One copy, three correct outputs, and you never picked a format.
 | `⌃⌥V` | **Pop.** Paste the next item from the stack. Press once per field. |
 | `⌃⌥⇧V` | **Merge.** Paste everything left on the stack as one block. |
 | `⌃⌥F` | **Search.** Ask for something you copied instead of scrolling for it. |
+| `⌃⌥H` | **Browse.** See everything that has been kept, and delete any of it. |
 
 **`⌘V` is never touched.** It stays byte-identical and instant, forever. No
 feature is worth adding latency to the most-pressed shortcut in computing.
@@ -75,6 +76,14 @@ content**, so a search result cannot contain anything you did not actually copy.
 History persists across launches, encrypted, which is what makes "last week" a
 question worth asking rather than one the buffer cannot answer. See
 [Privacy](#privacy) for what that costs and how to switch it off.
+
+**Browsing** is the other half, and deliberately not the same thing. Search is
+for when you can describe something but cannot find it; browsing is for seeing
+what is actually there. So `⌃⌥H` filters by literal substring in strict recency
+order — no ranking, no model, nothing rearranging under you as you read. It is
+also the only place the stored history is visible, which makes it the right home
+for deleting one specific clip with `⌘⌫`. **Forget everything** is the blunt
+instrument; this is the scalpel.
 
 ---
 
@@ -159,7 +168,7 @@ Swift and SwiftUI, no dependencies, assembled with SwiftPM into a plain
 ```
 Sources/Superclip/
 ├── main.swift            NSApplication bootstrap
-├── AppDelegate.swift     Menu bar, hotkey routing, all eight flows
+├── AppDelegate.swift     Menu bar, hotkey routing, all nine flows
 ├── Engine/
 │   ├── Hotkey.swift           Carbon hotkeys — chosen over NSEvent monitors
 │   │                          because Carbon *consumes* the keystroke
@@ -185,6 +194,7 @@ Sources/Superclip/
 │   └── Log.swift              ~/superclip-debug.log
 └── UI/
     ├── PreviewPanel.swift     Non-activating floating preview
+    ├── HistoryBrowser.swift   Browsable, filterable list of what is kept
     ├── QueryPanel.swift       Spotlight-style input bar
     └── RegionSelector.swift   Drag-to-select overlay
 ```
@@ -207,6 +217,13 @@ they cache server-side. Handwriting inverts all of that: it thinks, runs at high
 effort, and does not stream, because a confidently wrong transcription is worse
 than a slow one.
 
+**Nothing that can block runs before the bindings are live.** Registering the
+hotkeys is the first thing that happens at launch, ahead of any keychain or disk
+work, and the encrypted store is read on a background task. Reading it touches
+the keychain, and the keychain can raise a modal authorization prompt that
+blocks whoever asked — which on the main thread means an app that looks running
+but whose shortcuts silently do nothing.
+
 **Three paths return structure, not prose.** Pull, form fill, and search use
 structured output rather than streaming. Search goes further and returns only
 item *numbers*, which the caller pairs back with the original clipboard text —
@@ -224,6 +241,7 @@ Honest accounting, because most of this has not run yet.
 | Clipboard monitor + provenance | ✅ | ✅ | ✅ |
 | Retention / safety filter | ✅ | ✅ | ✅ |
 | Encrypted history store | ✅ | ✅ | ✅ |
+| History browser | ✅ | ✅ | ❌ |
 | Copy stack | ✅ | ✅ | ❌ |
 | Screen OCR | ✅ | ✅ | ❌ |
 | Handwriting routing | ✅ | ✅ | ❌ |

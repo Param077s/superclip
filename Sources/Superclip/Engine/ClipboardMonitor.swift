@@ -11,7 +11,10 @@ import AppKit
 /// inside the same tick, which is fast enough to be rare and harmless when wrong.
 @MainActor
 final class ClipboardMonitor {
-    struct Entry {
+    struct Entry: Identifiable {
+        /// Session-scoped identity, so the browser can delete one specific clip
+        /// without depending on list positions that shift underneath it.
+        let id = UUID()
         let text: String
         let source: AppContext?
         let capturedAt: Date
@@ -72,24 +75,47 @@ final class ClipboardMonitor {
     func stop() {
         timer?.invalidate()
         timer = nil
-        flush()
+        flushSynchronously()
     }
 
     // MARK: - Persistence
 
+    /// Reads the store off the main thread.
+    ///
+    /// This used to be a plain synchronous call during launch, and it was a bug:
+    /// the keychain read behind it can raise a modal authorization prompt, which
+    /// blocks whatever thread asked. On the main thread that stalls the rest of
+    /// startup — including hotkey registration — so the app sits there looking
+    /// alive while none of its bindings work.
     private func loadPersisted() {
-        let clips = HistoryStore.load(retentionDays: Settings.retentionDays, cap: Self.capacity)
-        history = clips.map { clip in
-            Entry(text: clip.text,
-                  source: clip.appName.map {
-                      // pid and window title are deliberately not persisted, so
-                      // a restored entry knows which app it came from and
-                      // nothing more.
-                      AppContext(name: $0, bundleID: clip.bundleID ?? "unknown",
-                                 pid: 0, windowTitle: nil)
-                  },
-                  capturedAt: clip.capturedAt)
+        let days = Settings.retentionDays
+        let cap = Self.capacity
+        Task.detached(priority: .utility) {
+            let clips = HistoryStore.load(retentionDays: days, cap: cap)
+            await MainActor.run { [weak self] in self?.merge(clips) }
         }
+    }
+
+    /// Folds restored clips in behind anything copied while the load was in
+    /// flight, so a fast copy during startup is not silently replaced.
+    private func merge(_ clips: [PersistedClip]) {
+        let known = Set(history.map(\.text))
+        let restored = clips
+            .filter { !known.contains($0.text) }
+            .map { clip in
+                Entry(text: clip.text,
+                      source: clip.appName.map {
+                          // pid and window title are deliberately not persisted,
+                          // so a restored entry knows which app it came from and
+                          // nothing more.
+                          AppContext(name: $0, bundleID: clip.bundleID ?? "unknown",
+                                     pid: 0, windowTitle: nil)
+                      },
+                      capturedAt: clip.capturedAt)
+            }
+        history.append(contentsOf: restored)
+        history.sort { $0.capturedAt > $1.capturedAt }
+        if history.count > Self.capacity { history.removeLast(history.count - Self.capacity) }
     }
 
     /// Writes are debounced: copying is bursty, and re-sealing the whole store
@@ -102,17 +128,45 @@ final class ClipboardMonitor {
         }
     }
 
-    /// Persists immediately. Called on quit and when the retention setting
-    /// changes, where waiting for the debounce would lose the write.
+    /// Writes off the main thread. Used for everything except quitting.
     func flush() {
         saveTimer?.invalidate()
         saveTimer = nil
-        HistoryStore.save(history.map {
+        let clips = snapshot()
+        let days = Settings.retentionDays
+        let cap = Self.capacity
+        Task.detached(priority: .utility) {
+            HistoryStore.save(clips, retentionDays: days, cap: cap)
+        }
+    }
+
+    /// Writes before the process goes away, where a detached task would not be
+    /// given the chance to finish. Blocking is acceptable here and nowhere else:
+    /// by quit time the keychain has already been authorized for this session,
+    /// so there is nothing left to prompt for.
+    func flushSynchronously() {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        HistoryStore.save(snapshot(), retentionDays: Settings.retentionDays, cap: Self.capacity)
+    }
+
+    private func snapshot() -> [PersistedClip] {
+        history.map {
             PersistedClip(text: $0.text,
                           appName: $0.source?.name,
                           bundleID: $0.source?.bundleID,
                           capturedAt: $0.capturedAt)
-        }, retentionDays: Settings.retentionDays, cap: Self.capacity)
+        }
+    }
+
+    /// Drops a single clip, and writes the removal through immediately — a user
+    /// deleting one specific thing should not have it linger on disk for the
+    /// length of a debounce.
+    func forget(id: UUID) {
+        guard let index = history.firstIndex(where: { $0.id == id }) else { return }
+        history.remove(at: index)
+        Log.write("history: forgot one clip, \(history.count) remaining")
+        flush()
     }
 
     /// Drops everything, in memory and on disk.

@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let regionSelector = RegionSelector()
     private let stack = CopyStack()
     private let queryPanel = QueryPanel()
+    private let historyBrowser = HistoryBrowser()
     private var stackItem: NSMenuItem!
     private var historyItem: NSMenuItem!
 
@@ -48,11 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Log.write("launch: AX=\(Permissions.hasAccessibility) SR=\(Permissions.hasScreenRecording) key=\(Settings.apiKey != nil)")
 
         setupStatusItem()
-
         stack.onChange = { [weak self] in self?.refreshStatusItem() }
         clipboard.onRetainedClip = { [weak self] text in self?.stack.append(text) }
-        clipboard.start()
 
+        // Bindings are registered before anything that touches the keychain or
+        // the disk. An app whose hotkeys are not yet live is indistinguishable
+        // from a broken one, so nothing that can stall is allowed to come first.
         hotkeys.registerSmartPaste { [weak self] in self?.handleSmartPaste() }
         hotkeys.registerScreenCapture { [weak self] in self?.handleScreenCapture() }
         hotkeys.registerPullPaste { [weak self] in self?.handlePullPaste() }
@@ -61,6 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkeys.registerPopStack { [weak self] in self?.handlePopStack() }
         hotkeys.registerMergeStack { [weak self] in self?.handleMergeStack() }
         hotkeys.registerSearchHistory { [weak self] in self?.handleSearchHistory() }
+        hotkeys.registerBrowseHistory { [weak self] in self?.handleBrowseHistory() }
+
+        // Only now: polling starts immediately, and the encrypted store is read
+        // on a background task that reports back when it is ready.
+        clipboard.start()
 
         if !Permissions.hasAccessibility { Permissions.requestAccessibility() }
     }
@@ -533,6 +540,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stack.clear()
     }
 
+    // MARK: - ⌃⌥H — browse what has been kept
+
+    private func handleBrowseHistory() {
+        guard flow == nil, !regionSelector.isActive else { dismiss(); return }
+        guard !historyBrowser.isVisible else { historyBrowser.hide(); return }
+        guard let target = AppContext.frontmost() else { NSSound.beep(); return }
+        guard !clipboard.history.isEmpty else {
+            NSSound.beep()
+            Log.write("browse: history empty")
+            return
+        }
+
+        historyBrowser.onPaste = { [weak self] text in
+            self?.historyBrowser.hide()
+            self?.performPaste(text, into: target)
+        }
+        historyBrowser.onDelete = { [weak self] id in self?.clipboard.forget(id: id) }
+        historyBrowser.onCancel = { [weak self] in self?.historyBrowser.hide() }
+        historyBrowser.show(entries: clipboard.history)
+        Log.write("browse: \(clipboard.history.count) clip(s)")
+    }
+
     // MARK: - ⌃⌥F — ask for something you copied
 
     private func handleSearchHistory() {
@@ -769,6 +798,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         streamTask = nil
         regionSelector.end()
         queryPanel.hide()
+        historyBrowser.hide()
         if case .capture = flow { restorePreviousApp() }
         flow = nil
         candidates = []
@@ -812,7 +842,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                       "⌃⌥C   Start / stop collecting",
                       "⌃⌥V   Paste next from stack",
                       "⌃⌥⇧V   Paste stack merged",
-                      "⌃⌥F   Search what you've copied"] {
+                      "⌃⌥F   Search what you've copied",
+                      "⌃⌥H   Browse clipboard history"] {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)

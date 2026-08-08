@@ -73,7 +73,10 @@ enum HistoryStore {
 
     // MARK: - Disk
 
-    @MainActor
+    /// Not main-actor isolated, deliberately. Reading the store touches the
+    /// keychain, and the keychain can put a modal authorization prompt in front
+    /// of the caller — on the main thread that means a frozen app. Callers run
+    /// this off-main and apply the result back on the main actor.
     static func load(retentionDays: Int, cap: Int) -> [PersistedClip] {
         guard retentionDays > 0 else { return [] }
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
@@ -98,7 +101,7 @@ enum HistoryStore {
         }
     }
 
-    @MainActor
+    /// Off-main for the same reason as `load`.
     static func save(_ clips: [PersistedClip], retentionDays: Int, cap: Int) {
         guard retentionDays > 0 else { purge(); return }
         do {
@@ -119,7 +122,6 @@ enum HistoryStore {
 
     /// Removes the store and the key. Without the key the bytes are
     /// unrecoverable even if the file itself is later undeleted.
-    @MainActor
     static func purge() {
         try? FileManager.default.removeItem(at: fileURL)
         HistoryKey.destroy()
@@ -136,7 +138,6 @@ enum HistoryKey {
     private static let service = "com.param.superclip"
     private static let account = "history-encryption-key"
 
-    @MainActor
     static func loadOrCreate() -> SymmetricKey {
         if let existing = existing() { return existing }
         let key = SymmetricKey(size: .bits256)

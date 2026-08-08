@@ -24,6 +24,7 @@ final class HotkeyManager {
         static let popStack: UInt32 = 6
         static let mergeStack: UInt32 = 7
         static let searchHistory: UInt32 = 8
+        static let browseHistory: UInt32 = 9
     }
 
     /// ⇧⌘V — reshape the clipboard for wherever the cursor is.
@@ -83,6 +84,12 @@ final class HotkeyManager {
     /// is what happens after you have found the thing.
     func registerSearchHistory(_ action: @escaping () -> Void) {
         register(id: ID.searchHistory, keyCode: UInt32(kVK_ANSI_F),
+                 modifiers: UInt32(controlKey | optionKey), action: action)
+    }
+
+    /// ⌃⌥H — see everything that has been kept, and remove any of it.
+    func registerBrowseHistory(_ action: @escaping () -> Void) {
+        register(id: ID.browseHistory, keyCode: UInt32(kVK_ANSI_H),
                  modifiers: UInt32(controlKey | optionKey), action: action)
     }
 
