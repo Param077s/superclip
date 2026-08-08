@@ -23,7 +23,10 @@ final class ClipboardMonitor {
     /// never written to disk. Persisting clipboard history is a genuinely
     /// dangerous thing to do casually, and it should not happen before the
     /// safety layer that governs what is allowed to be retained exists.
-    private static let capacity = 40
+    /// Sized for search rather than for the pull flow, which only ever reads the
+    /// top of the list. Two hundred strings is nothing in memory, and a search
+    /// over the last forty clips would rarely have the thing you are looking for.
+    private static let capacity = 200
 
     private var timer: Timer?
     private var lastChangeCount: Int

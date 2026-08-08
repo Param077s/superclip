@@ -23,6 +23,7 @@ final class HotkeyManager {
         static let toggleStack: UInt32 = 5
         static let popStack: UInt32 = 6
         static let mergeStack: UInt32 = 7
+        static let searchHistory: UInt32 = 8
     }
 
     /// ⇧⌘V — reshape the clipboard for wherever the cursor is.
@@ -75,6 +76,14 @@ final class HotkeyManager {
     func registerMergeStack(_ action: @escaping () -> Void) {
         register(id: ID.mergeStack, keyCode: UInt32(kVK_ANSI_V),
                  modifiers: UInt32(controlKey | optionKey | shiftKey), action: action)
+    }
+
+    /// ⌃⌥F — ask for something you copied instead of scrolling for it.
+    /// F rather than another V because the action begins as a search; the paste
+    /// is what happens after you have found the thing.
+    func registerSearchHistory(_ action: @escaping () -> Void) {
+        register(id: ID.searchHistory, keyCode: UInt32(kVK_ANSI_F),
+                 modifiers: UInt32(controlKey | optionKey), action: action)
     }
 
     private func register(id: UInt32, keyCode: UInt32, modifiers: UInt32,

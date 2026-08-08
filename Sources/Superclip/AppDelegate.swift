@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let preview = PreviewPanel()
     private let regionSelector = RegionSelector()
     private let stack = CopyStack()
+    private let queryPanel = QueryPanel()
     private var stackItem: NSMenuItem!
 
     /// What the preview panel is currently showing, if anything.
@@ -28,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case pull(target: AppContext)
         /// ⌃⇧⌘V — one record spread across a whole form, pending review.
         case fill(target: AppContext)
+        /// ⌃⌥F — searching history for something described from memory.
+        case search(target: AppContext)
     }
 
     private var flow: Flow?
@@ -56,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkeys.registerToggleStack { [weak self] in self?.handleToggleStack() }
         hotkeys.registerPopStack { [weak self] in self?.handlePopStack() }
         hotkeys.registerMergeStack { [weak self] in self?.handleMergeStack() }
+        hotkeys.registerSearchHistory { [weak self] in self?.handleSearchHistory() }
 
         if !Permissions.hasAccessibility { Permissions.requestAccessibility() }
     }
@@ -492,6 +496,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func clearStack() { stack.clear() }
 
+    // MARK: - ⌃⌥F — ask for something you copied
+
+    private func handleSearchHistory() {
+        guard flow == nil, !regionSelector.isActive else { dismiss(); return }
+        guard !queryPanel.isVisible else { queryPanel.hide(); return }
+        guard let target = AppContext.frontmost() else { NSSound.beep(); return }
+        guard !clipboard.history.isEmpty else {
+            NSSound.beep()
+            Log.write("search: history empty")
+            return
+        }
+
+        queryPanel.onCancel = { [weak self] in self?.queryPanel.hide() }
+        queryPanel.onSubmit = { [weak self] query in
+            self?.queryPanel.hide()
+            self?.runSearch(query: query, target: target)
+        }
+        queryPanel.show(placeholder: "Search what you've copied…")
+    }
+
+    private func runSearch(query: String, target: AppContext) {
+        let history = clipboard.history
+        flow = .search(target: target)
+        candidates = []
+        candidateIndex = 0
+        preview.onPrimary = { [weak self] text in self?.acceptSearchResult(text) }
+        preview.onSecondary = nil
+        preview.onCancel = { [weak self] in self?.dismiss() }
+        preview.onCycle = { [weak self] delta in self?.cycleCandidate(by: delta) }
+
+        // The local pass runs first and always. It answers literal queries with
+        // no network at all, and it is what keeps the feature working when there
+        // is no API key.
+        let lexical = HistorySearch.rank(query: query, history: history)
+        Log.write("search: \"\(query)\" over \(history.count) item(s), \(lexical.count) lexical hit(s)")
+
+        guard Settings.apiKey != nil else {
+            preview.show(headline: "Search: \(query)",
+                         subtitle: "matched on text only",
+                         primaryAction: "Paste",
+                         secondaryAction: nil,
+                         isStreaming: false)
+            presentSearchResults(lexical.prefix(5).map {
+                PullCandidate(label: "from \(history[$0.index].sourceName)",
+                              content: history[$0.index].text)
+            })
+            return
+        }
+
+        preview.show(headline: "Search: \(query)",
+                     subtitle: "looking…",
+                     primaryAction: "Paste",
+                     secondaryAction: nil)
+
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let matches = try await self.transformer.searchHistory(query: query, history: history)
+                guard !Task.isCancelled else { return }
+                self.preview.finishStreaming()
+                // Content comes from history, never from the model — the model
+                // only ever chose which items.
+                self.presentSearchResults(matches.map {
+                    PullCandidate(label: $0.label, content: history[$0.index].text)
+                })
+            } catch is CancellationError {
+                // Cancelled by the user; the panel is already gone.
+            } catch {
+                if !Task.isCancelled {
+                    self.preview.showError(error.localizedDescription)
+                    Log.write("search: failed — \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func presentSearchResults(_ results: [PullCandidate]) {
+        preview.finishStreaming()
+        candidates = results
+        candidateIndex = 0
+        guard !results.isEmpty else {
+            preview.showError("Nothing in your recent history matches that.")
+            Log.write("search: no matches")
+            return
+        }
+        showCandidate(at: 0)
+        Log.write("search: \(results.count) match(es)")
+    }
+
+    private func acceptSearchResult(_ text: String) {
+        guard case .search(let target) = flow else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { dismiss(); return }
+        dismiss()
+        performPaste(trimmed, into: target)
+    }
+
     // MARK: - ⌃⇧⌘V — fill a whole form from one copied record
 
     private func handleFillForm() {
@@ -630,6 +731,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         streamTask?.cancel()
         streamTask = nil
         regionSelector.end()
+        queryPanel.hide()
         if case .capture = flow { restorePreviousApp() }
         flow = nil
         candidates = []
@@ -672,7 +774,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                       "⌃⇧⌘V   Fill this form",
                       "⌃⌥C   Start / stop collecting",
                       "⌃⌥V   Paste next from stack",
-                      "⌃⌥⇧V   Paste stack merged"] {
+                      "⌃⌥⇧V   Paste stack merged",
+                      "⌃⌥F   Search what you've copied"] {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)

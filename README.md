@@ -11,7 +11,7 @@ Copy a table out of a PDF. Paste it into Numbers and you get real cells; into
 Slack and you get readable lines; into a code editor and you get an array
 literal. One copy, three correct outputs, and you never picked a format.
 
-> **Status: early.** The app builds, runs, and holds all seven of its bindings.
+> **Status: early.** The app builds, runs, and holds all eight of its bindings.
 > The parts that talk to the model, and the parts that need macOS permissions,
 > are written but have not yet been exercised against real apps. See
 > [Status](#status) before relying on any of it.
@@ -29,6 +29,7 @@ literal. One copy, three correct outputs, and you never picked a format.
 | `⌃⌥C` | **Collect.** Start or stop building a copy stack. |
 | `⌃⌥V` | **Pop.** Paste the next item from the stack. Press once per field. |
 | `⌃⌥⇧V` | **Merge.** Paste everything left on the stack as one block. |
+| `⌃⌥F` | **Search.** Ask for something you copied instead of scrolling for it. |
 
 **`⌘V` is never touched.** It stays byte-identical and instant, forever. No
 feature is worth adding latency to the most-pressed shortcut in computing.
@@ -62,6 +63,14 @@ review the mapping, fill.
 **The copy stack** does no model call and no network. That is the point: you
 already decided what those values are, so one press equals one field, instantly
 and for free.
+
+**Search** turns history from a filing cabinet into memory. Instead of scrolling
+a list of your last fifty clips, describe the thing — "the address from last
+week", "that tracking number", "the SQL from yesterday" — and the matches come
+back ranked, `↑↓` to cycle. A local text pass runs first, so literal queries
+resolve instantly and the feature still works with no API key; the model handles
+everything else, which is most of it. **The model returns item numbers, never
+content**, so a search result cannot contain anything you did not actually copy.
 
 ---
 
@@ -100,9 +109,12 @@ ad-hoc signing, and you will be re-granting permissions after every build.
 A clipboard tool earns trust or it gets deleted, so the rules are narrow and
 explicit.
 
-- **Clipboard history lives in memory only.** It is never written to disk and
-  dies with the process. Persisting clipboard history is a genuinely dangerous
-  thing to do casually.
+- **Clipboard history lives in memory only.** The last 200 clips, never written
+  to disk, gone when the process exits. Persisting clipboard history is a
+  genuinely dangerous thing to do casually. This does bound what search can
+  find — "the address from last week" cannot work against a buffer that empties
+  every time you quit — and closing that gap is the obvious next step, but it is
+  a retention decision to make deliberately rather than a feature to slip in.
 - **Password-manager clips are never retained.** Superclip honors the
   `org.nspasteboard.ConcealedType` convention, and additionally drops
   credential-shaped tokens (`sk-`, `ghp_`, `AKIA`, PEM blocks, and similar).
@@ -128,12 +140,13 @@ Swift and SwiftUI, no dependencies, assembled with SwiftPM into a plain
 ```
 Sources/Superclip/
 ├── main.swift            NSApplication bootstrap
-├── AppDelegate.swift     Menu bar, hotkey routing, all seven flows
+├── AppDelegate.swift     Menu bar, hotkey routing, all eight flows
 ├── Engine/
-│   ├── Hotkey.swift          Carbon hotkeys — chosen over NSEvent monitors
-│   │                         because Carbon *consumes* the keystroke
+│   ├── Hotkey.swift           Carbon hotkeys — chosen over NSEvent monitors
+│   │                          because Carbon *consumes* the keystroke
 │   ├── ClipboardMonitor.swift Polls changeCount; provenance + history
 │   ├── CopyStack.swift        Opt-in ordered collection, FIFO
+│   ├── HistorySearch.swift    Local lexical ranking of history
 │   ├── SensitiveContent.swift What is refused retention
 │   ├── AppContext.swift       Which app, which window
 │   ├── FieldIntent.swift      What the focused field is asking for
@@ -144,6 +157,7 @@ Sources/Superclip/
 │   ├── Destination.swift      Bundle ID → format profile
 │   ├── ScreenCapture.swift    ScreenCaptureKit region grab
 │   ├── TextRecognizer.swift   Vision OCR + line assembly
+│   ├── InkAnalysis.swift      Blank vs printed vs handwritten routing
 │   ├── PasteEngine.swift      Pasteboard snapshot, synthesized ⌘V, restore
 │   ├── Transformer.swift      Claude API — streaming and structured output
 │   ├── Settings.swift         Keychain
@@ -151,6 +165,7 @@ Sources/Superclip/
 │   └── Log.swift              ~/superclip-debug.log
 └── UI/
     ├── PreviewPanel.swift     Non-activating floating preview
+    ├── QueryPanel.swift       Spotlight-style input bar
     └── RegionSelector.swift   Drag-to-select overlay
 ```
 
@@ -165,9 +180,18 @@ keystrokes. Before those keystrokes are sent, the target field's focus is
 verified against the application's own idea of what is focused; otherwise they
 would land somewhere else and overwrite it.
 
-**Latency is the product.** The model calls stream so the preview fills token
-by token, thinking is disabled at low effort, fast mode is on by default, and
-the system prompts are frozen byte-for-byte so they cache server-side.
+**Latency is the product — with one deliberate exception.** The model calls
+stream so the preview fills token by token, thinking is disabled at low effort,
+fast mode is on by default, and the system prompts are frozen byte-for-byte so
+they cache server-side. Handwriting inverts all of that: it thinks, runs at high
+effort, and does not stream, because a confidently wrong transcription is worse
+than a slow one.
+
+**Three paths return structure, not prose.** Pull, form fill, and search use
+structured output rather than streaming. Search goes further and returns only
+item *numbers*, which the caller pairs back with the original clipboard text —
+so a search result cannot contain anything you did not copy, by construction
+rather than by instruction.
 
 ---
 
@@ -183,6 +207,8 @@ Honest accounting, because most of this has not run yet.
 | Screen OCR | ✅ | ✅ | ❌ |
 | Handwriting routing | ✅ | ✅ | ❌ |
 | Handwriting transcription | ✅ | ❌ | ❌ |
+| Search — local text pass | ✅ | ✅ | ❌ |
+| Search — semantic ranking | ✅ | ❌ | ❌ |
 | Reading-order sorting | ✅ | ✅ (fuzzed) | ❌ |
 | Smart paste | ✅ | ❌ | ❌ |
 | Pull | ✅ | ❌ | ❌ |
