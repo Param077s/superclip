@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Superclip</string>
+    <key>CFBundleDisplayName</key>
+    <string>Superclip</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.param.superclip</string>
+    <key>CFBundleExecutable</key>
+    <string>Superclip</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Superclip reads the name of the app you are pasting into so it can format the paste correctly.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Superclip captures the region of the screen you select so it can read the text out of it.</string>
+</dict>
+</plist>
