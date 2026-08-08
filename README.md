@@ -211,7 +211,9 @@ Sources/SuperclipKit/
     ├── HistoryBrowser.swift   Browsable, filterable list of what is kept
     ├── QueryPanel.swift       Spotlight-style input bar
     ├── SettingsWindow.swift   Rebinding, with a key recorder
-    └── RegionSelector.swift   Drag-to-select overlay
+    ├── RegionSelector.swift   Drag-to-select overlay
+    └── SuperclipMark.swift    The icon, as geometry
+Sources/IconGen/main.swift     Draws the app icon from that geometry
 ```
 
 Two implementation notes worth knowing before changing anything:
@@ -231,6 +233,16 @@ fast mode is on by default, and the system prompts are frozen byte-for-byte so
 they cache server-side. Handwriting inverts all of that: it thinks, runs at high
 effort, and does not stream, because a confidently wrong transcription is worse
 than a slow one.
+
+**The icon is code, not an asset.** One mark — a copy arriving at a boundary
+and leaving as three — is defined once as geometry and drawn twice: as a
+template image for the menu bar, and by `IconGen` as the app icon.
+`./Tools/generate-icons.sh` regenerates `Resources/Superclip.icns`, so the
+committed binary is reproducible rather than something nobody can edit. The menu
+bar version has three states, and they differ in silhouette rather than in
+detail because at 18pt detail is not there: an open fan when nothing is held,
+the fan closed into a stack while items are waiting, and one solid slab while
+collection is switched on.
 
 **Recording a shortcut has to stand the others down.** Carbon consumes a
 registered hotkey before any local monitor can see it, so with the bindings live
@@ -258,17 +270,18 @@ rather than by instruction.
 swift test
 ```
 
-57 tests over the parts that can be checked without a network, an API key, or a
+61 tests over the parts that can be checked without a network, an API key, or a
 granted permission: the retention filter, reading order (fuzzed over 2000 random
 layouts), the copy stack, local search, hotkey bindings and conflict detection,
-the encrypted store, and OCR and handwriting routing against real rendered
-images rather than fixtures.
+the encrypted store, OCR and handwriting routing against real rendered images
+rather than fixtures, and the menu bar mark, rasterised and counted.
 
 They are pointed at the failures that are silent at runtime — a sentence
 beginning "sk-" being mistaken for a credential, two actions claiming one
 shortcut, a comparator that traps on a staggered two-column form, ciphertext
-containing readable plaintext. Several of these were written while chasing a bug
-that had already shipped.
+containing readable plaintext, an icon that stops being a template image and so
+goes invisible on half of all menu bars. Several of these were written while
+chasing a bug that had already shipped.
 
 ---
 

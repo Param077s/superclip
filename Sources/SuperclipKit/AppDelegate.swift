@@ -932,17 +932,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     /// The stack is the one piece of hidden state Superclip holds, so it is made
     /// unmistakable in the menu bar: a different icon while collecting, and a
     /// live count whenever anything is queued.
+    /// The status item is the only thing this app shows when it is working, so
+    /// it has to answer "is it collecting?" without being read — hence a mark
+    /// whose three states differ in silhouette, not in detail.
+    ///
+    /// `isCollecting` outranks a non-empty stack: while collection is on, that
+    /// is the fact worth reporting, and the count carries the rest.
     private func refreshStatusItem() {
         guard let button = statusItem?.button else { return }
-        let symbol: String
+        let state: SuperclipMark.State
         if stack.isCollecting {
-            symbol = "square.stack.3d.up.fill"
+            state = .collecting
         } else if !stack.isEmpty {
-            symbol = "square.stack.3d.up"
+            state = .holding
         } else {
-            symbol = "doc.on.clipboard"
+            state = .idle
         }
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Superclip")
+        button.image = SuperclipMark.menuBarImage(state)
         button.title = stack.isEmpty ? "" : " \(stack.count)"
     }
 

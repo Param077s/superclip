@@ -24,6 +24,17 @@ let package = Package(
                 .swiftLanguageMode(.v5)
             ]
         ),
+        // The icon generator. It depends on SuperclipKit rather than carrying
+        // its own copy of the mark, so the app icon and the menu bar icon are
+        // the same drawing by construction and cannot drift apart.
+        .executableTarget(
+            name: "IconGen",
+            dependencies: ["SuperclipKit"],
+            path: "Sources/IconGen",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
         .testTarget(
             name: "SuperclipKitTests",
             dependencies: ["SuperclipKit"],
