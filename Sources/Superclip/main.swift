@@ -1,4 +1,5 @@
 import AppKit
+import SuperclipKit
 
 MainActor.assumeIsolated {
     let app = NSApplication.shared

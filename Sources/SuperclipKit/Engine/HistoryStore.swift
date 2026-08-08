@@ -10,6 +10,20 @@ struct PersistedClip: Codable, Equatable {
     let appName: String?
     let bundleID: String?
     let capturedAt: Date
+
+    init(text: String, appName: String?, bundleID: String?, capturedAt: Date) {
+        self.text = text
+        self.appName = appName
+        self.bundleID = bundleID
+        // Whole seconds, deliberately. A `Date` is encoded as a JSON number and
+        // decoded back through a decimal string, and that is not always
+        // bit-identical — so a timestamp drifted very slightly on every
+        // save/load cycle. Nothing here needs finer resolution than a second:
+        // the retention window is measured in days and the only other consumer
+        // is a "5 minutes ago" label. Rounding makes the round-trip exact by
+        // construction rather than approximately true.
+        self.capturedAt = Date(timeIntervalSince1970: capturedAt.timeIntervalSince1970.rounded())
+    }
 }
 
 /// Encrypted, aging clipboard history on disk.

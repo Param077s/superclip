@@ -175,11 +175,12 @@ persisted.
 ## How it is built
 
 Swift and SwiftUI, no dependencies, assembled with SwiftPM into a plain
-`.app` bundle.
+`.app` bundle. The app lives in a library target so it can be imported by tests;
+the executable is nothing but a bootstrap.
 
 ```
-Sources/Superclip/
-├── main.swift            NSApplication bootstrap
+Sources/Superclip/main.swift   NSApplication bootstrap
+Sources/SuperclipKit/
 ├── AppDelegate.swift     Menu bar, hotkey routing, all nine flows
 ├── Engine/
 │   ├── Hotkey.swift           Carbon hotkeys — chosen over NSEvent monitors
@@ -248,6 +249,26 @@ structured output rather than streaming. Search goes further and returns only
 item *numbers*, which the caller pairs back with the original clipboard text —
 so a search result cannot contain anything you did not copy, by construction
 rather than by instruction.
+
+---
+
+## Tests
+
+```bash
+swift test
+```
+
+57 tests over the parts that can be checked without a network, an API key, or a
+granted permission: the retention filter, reading order (fuzzed over 2000 random
+layouts), the copy stack, local search, hotkey bindings and conflict detection,
+the encrypted store, and OCR and handwriting routing against real rendered
+images rather than fixtures.
+
+They are pointed at the failures that are silent at runtime — a sentence
+beginning "sk-" being mistaken for a credential, two actions claiming one
+shortcut, a comparator that traps on a staggered two-column form, ciphertext
+containing readable plaintext. Several of these were written while chasing a bug
+that had already shipped.
 
 ---
 

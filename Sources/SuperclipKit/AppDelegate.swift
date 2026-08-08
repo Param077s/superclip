@@ -1,8 +1,14 @@
 import AppKit
 import CoreGraphics
 
+/// The only thing the executable target needs to reach, so it is the only thing
+/// made public. Everything else stays internal and is reached by tests through
+/// `@testable import`.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+
+    public override init() { super.init() }
+
     private var statusItem: NSStatusItem!
     private var axItem: NSMenuItem!
     private var screenItem: NSMenuItem!
@@ -45,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Restored after a capture, so the user lands back where they were.
     private var appBeforeCapture: NSRunningApplication?
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    public func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         Log.reset()
         Log.write("launch: AX=\(Permissions.hasAccessibility) SR=\(Permissions.hasScreenRecording) key=\(Settings.apiKey != nil)")
@@ -67,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// The debounced save would otherwise lose the last few clips on quit.
-    func applicationWillTerminate(_ notification: Notification) {
+    public func applicationWillTerminate(_ notification: Notification) {
         clipboard.stop()
     }
 
@@ -940,7 +946,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.title = stack.isEmpty ? "" : " \(stack.count)"
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
+    public func menuWillOpen(_ menu: NSMenu) {
         let status = hotkeys.registrationStatus
         for action in HotkeyAction.allCases {
             let shortcut = Bindings.binding(for: action).display
