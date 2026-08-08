@@ -72,6 +72,10 @@ resolve instantly and the feature still works with no API key; the model handles
 everything else, which is most of it. **The model returns item numbers, never
 content**, so a search result cannot contain anything you did not actually copy.
 
+History persists across launches, encrypted, which is what makes "last week" a
+question worth asking rather than one the buffer cannot answer. See
+[Privacy](#privacy) for what that costs and how to switch it off.
+
 ---
 
 ## Setup
@@ -109,12 +113,21 @@ ad-hoc signing, and you will be re-granting permissions after every build.
 A clipboard tool earns trust or it gets deleted, so the rules are narrow and
 explicit.
 
-- **Clipboard history lives in memory only.** The last 200 clips, never written
-  to disk, gone when the process exits. Persisting clipboard history is a
-  genuinely dangerous thing to do casually. This does bound what search can
-  find — "the address from last week" cannot work against a buffer that empties
-  every time you quit — and closing that gap is the obvious next step, but it is
-  a retention decision to make deliberately rather than a feature to slip in.
+- **History is encrypted at rest and expires on its own.** The last 200 clips
+  are stored in `~/Library/Application Support/Superclip/history.dat`, sealed
+  with AES-GCM under a 256-bit key held in your login keychain as
+  `ThisDeviceOnly` — so the key never reaches iCloud Keychain or an encrypted
+  backup, and a copy of the file taken from a backup cannot be opened anywhere
+  else. The file is `0600`, and nothing survives past the retention window
+  (a week by default; **Keep history for** in the menu offers 1 day, 1 week,
+  30 days, or not saving to disk at all).
+- **Forget everything actually forgets.** The menu item deletes the file *and*
+  destroys the key, so the stored bytes are unrecoverable even if the file
+  itself is later undeleted from a backup or a disk image.
+- **A damaged store loses history rather than inventing it.** Decryption is
+  authenticated, so a wrong key, a truncated file, or a single flipped bit is
+  detected and the store is discarded instead of decrypting to something
+  plausible-looking.
 - **Password-manager clips are never retained.** Superclip honors the
   `org.nspasteboard.ConcealedType` convention, and additionally drops
   credential-shaped tokens (`sk-`, `ghp_`, `AKIA`, PEM blocks, and similar).
@@ -129,6 +142,12 @@ explicit.
 What leaves your machine: the clipboard content or screen region you are acting
 on, plus the name of the destination app and its window title, sent to the
 Anthropic API. The copy stack's pop path sends nothing at all.
+
+What is written to disk is smaller than what is held in memory. A stored clip
+keeps its text, the name and bundle id of the app it came from, and when it was
+copied. Process ids are meaningless across launches and window titles routinely
+carry document names, client names, and ticket subjects, so neither is
+persisted.
 
 ---
 
@@ -145,6 +164,7 @@ Sources/Superclip/
 │   ├── Hotkey.swift           Carbon hotkeys — chosen over NSEvent monitors
 │   │                          because Carbon *consumes* the keystroke
 │   ├── ClipboardMonitor.swift Polls changeCount; provenance + history
+│   ├── HistoryStore.swift     AES-GCM store, keychain key, retention
 │   ├── CopyStack.swift        Opt-in ordered collection, FIFO
 │   ├── HistorySearch.swift    Local lexical ranking of history
 │   ├── SensitiveContent.swift What is refused retention
@@ -203,6 +223,7 @@ Honest accounting, because most of this has not run yet.
 | --- | :-: | :-: | :-: |
 | Clipboard monitor + provenance | ✅ | ✅ | ✅ |
 | Retention / safety filter | ✅ | ✅ | ✅ |
+| Encrypted history store | ✅ | ✅ | ✅ |
 | Copy stack | ✅ | ✅ | ❌ |
 | Screen OCR | ✅ | ✅ | ❌ |
 | Handwriting routing | ✅ | ✅ | ❌ |

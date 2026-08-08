@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let stack = CopyStack()
     private let queryPanel = QueryPanel()
     private var stackItem: NSMenuItem!
+    private var historyItem: NSMenuItem!
 
     /// What the preview panel is currently showing, if anything.
     private enum Flow {
@@ -62,6 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkeys.registerSearchHistory { [weak self] in self?.handleSearchHistory() }
 
         if !Permissions.hasAccessibility { Permissions.requestAccessibility() }
+    }
+
+    /// The debounced save would otherwise lose the last few clips on quit.
+    func applicationWillTerminate(_ notification: Notification) {
+        clipboard.stop()
     }
 
     // MARK: - ⇧⌘V — smart paste
@@ -496,6 +502,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func clearStack() { stack.clear() }
 
+    // MARK: - History retention
+
+    @objc private func setRetention(_ sender: NSMenuItem) {
+        let previous = Settings.retentionDays
+        Settings.retentionDays = sender.tag
+        Log.write("history: retention \(previous)d → \(sender.tag)d")
+        // Flush rather than wait for the debounce: turning retention off must
+        // remove the file now, not in two seconds.
+        clipboard.flush()
+    }
+
+    @objc private func forgetEverything() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Forget everything Superclip has stored?"
+        alert.informativeText = """
+        This deletes the clipboard history held in memory and on disk, and \
+        destroys the encryption key so the stored file cannot be recovered even \
+        from a backup. It cannot be undone.
+        """
+        alert.addButton(withTitle: "Forget Everything")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        clipboard.forgetEverything()
+        stack.clear()
+    }
+
     // MARK: - ⌃⌥F — ask for something you copied
 
     private func handleSearchHistory() {
@@ -785,6 +822,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stackItem = NSMenuItem(title: "Clear stack", action: #selector(clearStack), keyEquivalent: "")
         stackItem.target = self
         menu.addItem(stackItem)
+
+        historyItem = NSMenuItem(title: "Keep history for", action: nil, keyEquivalent: "")
+        let retention = NSMenu()
+        for (title, days) in [("Don't save to disk", 0), ("1 day", 1), ("1 week", 7), ("30 days", 30)] {
+            let option = NSMenuItem(title: title, action: #selector(setRetention(_:)), keyEquivalent: "")
+            option.target = self
+            option.tag = days
+            retention.addItem(option)
+        }
+        historyItem.submenu = retention
+        menu.addItem(historyItem)
+
+        let forget = NSMenuItem(title: "Forget everything…", action: #selector(forgetEverything), keyEquivalent: "")
+        forget.target = self
+        menu.addItem(forget)
         menu.addItem(.separator())
 
         keyItem = NSMenuItem(title: "Set API Key…", action: #selector(promptForAPIKey), keyEquivalent: "")
@@ -839,6 +891,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             stackItem.title = "Clear stack (\(stack.count) item(s))"
         }
         stackItem.isEnabled = !stack.isEmpty || stack.isCollecting
+
+        let days = Settings.retentionDays
+        historyItem.title = days == 0
+            ? "Keep history for: not saved to disk"
+            : "Keep history for: \(days) day\(days == 1 ? "" : "s")"
+        for option in historyItem.submenu?.items ?? [] {
+            option.state = option.tag == days ? .on : .off
+        }
 
         axItem.title = Permissions.hasAccessibility
             ? "Accessibility ✓" : "Accessibility — grant access…"

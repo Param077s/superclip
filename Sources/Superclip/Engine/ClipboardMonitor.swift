@@ -19,13 +19,16 @@ final class ClipboardMonitor {
         var sourceName: String { source?.name ?? "unknown app" }
     }
 
-    /// History is deliberately in memory only — it dies with the process and is
-    /// never written to disk. Persisting clipboard history is a genuinely
-    /// dangerous thing to do casually, and it should not happen before the
-    /// safety layer that governs what is allowed to be retained exists.
+    /// How many clips are kept, in memory and on disk alike.
+    ///
     /// Sized for search rather than for the pull flow, which only ever reads the
-    /// top of the list. Two hundred strings is nothing in memory, and a search
-    /// over the last forty clips would rarely have the thing you are looking for.
+    /// top of the list. A search over the last forty clips would rarely contain
+    /// the thing being looked for.
+    ///
+    /// History is persisted by `HistoryStore`, encrypted and expiring. What is
+    /// allowed in at all is `SensitiveContent`'s decision, and it is applied
+    /// before anything reaches this list — so the store can never contain a clip
+    /// the retention rules would have refused.
     private static let capacity = 200
 
     private var timer: Timer?
@@ -52,11 +55,14 @@ final class ClipboardMonitor {
     /// output.
     var isSuppressed = false
 
+    private var saveTimer: Timer?
+
     init() {
         lastChangeCount = NSPasteboard.general.changeCount
     }
 
     func start() {
+        loadPersisted()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
@@ -66,6 +72,55 @@ final class ClipboardMonitor {
     func stop() {
         timer?.invalidate()
         timer = nil
+        flush()
+    }
+
+    // MARK: - Persistence
+
+    private func loadPersisted() {
+        let clips = HistoryStore.load(retentionDays: Settings.retentionDays, cap: Self.capacity)
+        history = clips.map { clip in
+            Entry(text: clip.text,
+                  source: clip.appName.map {
+                      // pid and window title are deliberately not persisted, so
+                      // a restored entry knows which app it came from and
+                      // nothing more.
+                      AppContext(name: $0, bundleID: clip.bundleID ?? "unknown",
+                                 pid: 0, windowTitle: nil)
+                  },
+                  capturedAt: clip.capturedAt)
+        }
+    }
+
+    /// Writes are debounced: copying is bursty, and re-sealing the whole store
+    /// on every clip would encrypt and rewrite the file several times a second
+    /// during a copy stack run for no benefit.
+    private func scheduleSave() {
+        saveTimer?.invalidate()
+        saveTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flush() }
+        }
+    }
+
+    /// Persists immediately. Called on quit and when the retention setting
+    /// changes, where waiting for the debounce would lose the write.
+    func flush() {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        HistoryStore.save(history.map {
+            PersistedClip(text: $0.text,
+                          appName: $0.source?.name,
+                          bundleID: $0.source?.bundleID,
+                          capturedAt: $0.capturedAt)
+        }, retentionDays: Settings.retentionDays, cap: Self.capacity)
+    }
+
+    /// Drops everything, in memory and on disk.
+    func forgetEverything() {
+        history.removeAll()
+        saveTimer?.invalidate()
+        saveTimer = nil
+        HistoryStore.purge()
     }
 
     /// The plain-text contents of the clipboard right now.
@@ -113,6 +168,7 @@ final class ClipboardMonitor {
         history.insert(Entry(text: text, source: sourceApp, capturedAt: Date()), at: 0)
         if history.count > Self.capacity { history.removeLast(history.count - Self.capacity) }
         Log.write("clipboard: changed, source=\(sourceApp?.name ?? "unknown"), history=\(history.count)")
+        scheduleSave()
         onRetainedClip?(text)
     }
 

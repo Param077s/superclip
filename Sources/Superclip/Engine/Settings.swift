@@ -18,6 +18,20 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "fastMode") }
     }
 
+    /// How many days of clipboard history to keep on disk. Zero means keep none
+    /// — history stays in memory and dies with the process.
+    ///
+    /// A week is the default because it is the horizon people actually search
+    /// against ("the address from last week") while still being short enough
+    /// that the file never becomes a long-term record of everything they copied.
+    static var retentionDays: Int {
+        get {
+            if UserDefaults.standard.object(forKey: "retentionDays") == nil { return 7 }
+            return UserDefaults.standard.integer(forKey: "retentionDays")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "retentionDays") }
+    }
+
     static var apiKey: String? {
         if let fromKeychain = readKeychain(), !fromKeychain.isEmpty { return fromKeychain }
         if let fromEnv = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !fromEnv.isEmpty {
