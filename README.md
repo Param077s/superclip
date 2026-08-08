@@ -198,3 +198,9 @@ Known unknowns, in the order they are likely to bite:
 are `form: scanned N nodes, M writable field(s)` and `pull: field=… role=…`. If
 those come back empty on a form that visibly has fields, the role filter or the
 settability check is too strict.
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Param077s
