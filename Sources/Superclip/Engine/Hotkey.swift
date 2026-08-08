@@ -4,106 +4,53 @@ import Carbon.HIToolbox
 /// Global hotkeys, registered through Carbon's `RegisterEventHotKey`.
 ///
 /// Carbon is used rather than an `NSEvent` global monitor for one reason: it
-/// *consumes* the keystroke. A global monitor only observes, so Cmd+Shift+V
-/// would still reach the frontmost app and fire its own "paste and match style".
+/// *consumes* the keystroke. A global monitor only observes, so ⇧⌘V would still
+/// reach the frontmost app and fire its own "paste and match style".
 @MainActor
 final class HotkeyManager {
-    /// The C event handler cannot capture context, so it reaches the actions
+    /// The C event handler cannot capture context, so it reaches the action
     /// through this, keyed by hotkey id.
-    private static var actions: [UInt32: () -> Void] = [:]
+    private static var actions: [UInt32: HotkeyAction] = [:]
+    private static var dispatch: ((HotkeyAction) -> Void)?
 
     private var refs: [EventHotKeyRef?] = []
     private var handlerRef: EventHandlerRef?
 
-    private enum ID {
-        static let smartPaste: UInt32 = 1
-        static let captureScreen: UInt32 = 2
-        static let pullPaste: UInt32 = 3
-        static let fillForm: UInt32 = 4
-        static let toggleStack: UInt32 = 5
-        static let popStack: UInt32 = 6
-        static let mergeStack: UInt32 = 7
-        static let searchHistory: UInt32 = 8
-        static let browseHistory: UInt32 = 9
-    }
+    /// Whether each action's binding actually took. A non-zero status means the
+    /// combination is spoken for — usually by macOS or another running app — and
+    /// the settings window shows it rather than leaving a dead key.
+    private(set) var registrationStatus: [HotkeyAction: OSStatus] = [:]
 
-    /// ⇧⌘V — reshape the clipboard for wherever the cursor is.
-    /// Plain ⌘V is deliberately never touched; it must stay instant.
-    func registerSmartPaste(_ action: @escaping () -> Void) {
-        register(id: ID.smartPaste, keyCode: UInt32(kVK_ANSI_V),
-                 modifiers: UInt32(cmdKey | shiftKey), action: action)
-    }
-
-    /// ⌥⇧⌘C — grab text out of any region of the screen.
-    /// ⇧⌘C is avoided because Chrome binds it to "inspect element" and Finder to
-    /// "go to Computer"; Carbon would swallow both.
-    func registerScreenCapture(_ action: @escaping () -> Void) {
-        register(id: ID.captureScreen, keyCode: UInt32(kVK_ANSI_C),
-                 modifiers: UInt32(cmdKey | shiftKey | optionKey), action: action)
-    }
-
-    /// ⌃⌘V — pull: ask what belongs in the field under the cursor.
-    /// ⌥⌘V is avoided because Finder binds it to "Move Item Here".
-    func registerPullPaste(_ action: @escaping () -> Void) {
-        register(id: ID.pullPaste, keyCode: UInt32(kVK_ANSI_V),
-                 modifiers: UInt32(cmdKey | controlKey), action: action)
-    }
-
-    /// ⌃⇧⌘V — spread one copied record across a whole form.
-    /// A sibling of pull, deliberately: same key, one more modifier, one bigger
-    /// blast radius. ⌥⇧⌘V is avoided because macOS binds it to Paste and Match
-    /// Style in Mail, TextEdit, and Pages.
-    func registerFillForm(_ action: @escaping () -> Void) {
-        register(id: ID.fillForm, keyCode: UInt32(kVK_ANSI_V),
-                 modifiers: UInt32(cmdKey | controlKey | shiftKey), action: action)
-    }
-
-    /// ⌃⌥C — start or stop collecting into the copy stack.
-    func registerToggleStack(_ action: @escaping () -> Void) {
-        register(id: ID.toggleStack, keyCode: UInt32(kVK_ANSI_C),
-                 modifiers: UInt32(controlKey | optionKey), action: action)
-    }
-
-    /// ⌃⌥V — paste the next item off the stack.
-    ///
-    /// Two modifiers rather than three, and adjacent to each other, because this
-    /// is the one binding meant to be pressed repeatedly — once per form field.
-    func registerPopStack(_ action: @escaping () -> Void) {
-        register(id: ID.popStack, keyCode: UInt32(kVK_ANSI_V),
-                 modifiers: UInt32(controlKey | optionKey), action: action)
-    }
-
-    /// ⌃⌥⇧V — paste everything left on the stack as one merged block.
-    func registerMergeStack(_ action: @escaping () -> Void) {
-        register(id: ID.mergeStack, keyCode: UInt32(kVK_ANSI_V),
-                 modifiers: UInt32(controlKey | optionKey | shiftKey), action: action)
-    }
-
-    /// ⌃⌥F — ask for something you copied instead of scrolling for it.
-    /// F rather than another V because the action begins as a search; the paste
-    /// is what happens after you have found the thing.
-    func registerSearchHistory(_ action: @escaping () -> Void) {
-        register(id: ID.searchHistory, keyCode: UInt32(kVK_ANSI_F),
-                 modifiers: UInt32(controlKey | optionKey), action: action)
-    }
-
-    /// ⌃⌥H — see everything that has been kept, and remove any of it.
-    func registerBrowseHistory(_ action: @escaping () -> Void) {
-        register(id: ID.browseHistory, keyCode: UInt32(kVK_ANSI_H),
-                 modifiers: UInt32(controlKey | optionKey), action: action)
-    }
-
-    private func register(id: UInt32, keyCode: UInt32, modifiers: UInt32,
-                          action: @escaping () -> Void) {
-        HotkeyManager.actions[id] = action
+    /// Registers every action's current binding, replacing anything already
+    /// registered. Called at launch and again whenever a binding changes.
+    func registerAll(_ handler: @escaping (HotkeyAction) -> Void) {
+        unregisterAll()
+        HotkeyManager.dispatch = handler
         installHandlerIfNeeded()
 
-        var ref: EventHotKeyRef?
-        let hotKeyID = EventHotKeyID(signature: OSType(0x53434C50), id: id) // 'SCLP'
-        let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
-                                         GetApplicationEventTarget(), 0, &ref)
-        refs.append(ref)
-        Log.write("hotkey: register id=\(id) status=\(status)")
+        for action in HotkeyAction.allCases {
+            let binding = Bindings.binding(for: action)
+            guard binding.isUsable else {
+                registrationStatus[action] = OSStatus(paramErr)
+                continue
+            }
+
+            var ref: EventHotKeyRef?
+            let id = EventHotKeyID(signature: OSType(0x53434C50), id: action.hotkeyID) // 'SCLP'
+            let status = RegisterEventHotKey(UInt32(binding.keyCode),
+                                             binding.carbonModifiers,
+                                             id,
+                                             GetApplicationEventTarget(), 0, &ref)
+            registrationStatus[action] = status
+            if status == noErr {
+                HotkeyManager.actions[action.hotkeyID] = action
+                refs.append(ref)
+            }
+        }
+
+        let failed = registrationStatus.filter { $0.value != noErr }
+        Log.write("hotkeys: registered \(registrationStatus.count - failed.count)/\(registrationStatus.count)"
+                  + (failed.isEmpty ? "" : ", unavailable: \(failed.keys.map(\.rawValue).sorted().joined(separator: ", "))"))
     }
 
     private func installHandlerIfNeeded() {
@@ -116,7 +63,10 @@ final class HotkeyManager {
                               EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID)
             let id = hotKeyID.id
-            MainActor.assumeIsolated { HotkeyManager.actions[id]?() }
+            MainActor.assumeIsolated {
+                guard let action = HotkeyManager.actions[id] else { return }
+                HotkeyManager.dispatch?(action)
+            }
             return noErr
         }, 1, &spec, nil, &handlerRef)
     }
@@ -124,8 +74,7 @@ final class HotkeyManager {
     func unregisterAll() {
         for ref in refs { if let ref { UnregisterEventHotKey(ref) } }
         refs.removeAll()
-        if let handlerRef { RemoveEventHandler(handlerRef) }
-        handlerRef = nil
         HotkeyManager.actions.removeAll()
+        registrationStatus.removeAll()
     }
 }

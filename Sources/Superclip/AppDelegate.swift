@@ -17,8 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let stack = CopyStack()
     private let queryPanel = QueryPanel()
     private let historyBrowser = HistoryBrowser()
+    private let settingsWindow = SettingsWindow()
     private var stackItem: NSMenuItem!
     private var historyItem: NSMenuItem!
+    private var bindingItems: [HotkeyAction: NSMenuItem] = [:]
 
     /// What the preview panel is currently showing, if anything.
     private enum Flow {
@@ -55,15 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Bindings are registered before anything that touches the keychain or
         // the disk. An app whose hotkeys are not yet live is indistinguishable
         // from a broken one, so nothing that can stall is allowed to come first.
-        hotkeys.registerSmartPaste { [weak self] in self?.handleSmartPaste() }
-        hotkeys.registerScreenCapture { [weak self] in self?.handleScreenCapture() }
-        hotkeys.registerPullPaste { [weak self] in self?.handlePullPaste() }
-        hotkeys.registerFillForm { [weak self] in self?.handleFillForm() }
-        hotkeys.registerToggleStack { [weak self] in self?.handleToggleStack() }
-        hotkeys.registerPopStack { [weak self] in self?.handlePopStack() }
-        hotkeys.registerMergeStack { [weak self] in self?.handleMergeStack() }
-        hotkeys.registerSearchHistory { [weak self] in self?.handleSearchHistory() }
-        hotkeys.registerBrowseHistory { [weak self] in self?.handleBrowseHistory() }
+        registerHotkeys()
 
         // Only now: polling starts immediately, and the encrypted store is read
         // on a background task that reports back when it is ready.
@@ -75,6 +69,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The debounced save would otherwise lose the last few clips on quit.
     func applicationWillTerminate(_ notification: Notification) {
         clipboard.stop()
+    }
+
+    // MARK: - Hotkeys
+
+    private func registerHotkeys() {
+        hotkeys.registerAll { [weak self] action in self?.perform(action) }
+    }
+
+    private func perform(_ action: HotkeyAction) {
+        switch action {
+        case .smartPaste:    handleSmartPaste()
+        case .captureScreen: handleScreenCapture()
+        case .pullPaste:     handlePullPaste()
+        case .fillForm:      handleFillForm()
+        case .toggleStack:   handleToggleStack()
+        case .popStack:      handlePopStack()
+        case .mergeStack:    handleMergeStack()
+        case .searchHistory: handleSearchHistory()
+        case .browseHistory: handleBrowseHistory()
+        }
+    }
+
+    @objc private func openSettings() {
+        settingsWindow.onChange = { [weak self] in
+            guard let self else { return }
+            self.registerHotkeys()
+            self.settingsWindow.refresh()
+        }
+        // Registered hotkeys are consumed by Carbon before any local monitor
+        // sees them, so recording a new combination requires standing them down.
+        settingsWindow.onRecordingBegan = { [weak self] in self?.hotkeys.unregisterAll() }
+        settingsWindow.onRecordingEnded = { [weak self] in self?.registerHotkeys() }
+        settingsWindow.registrationStatus = { [weak self] in self?.hotkeys.registrationStatus ?? [:] }
+        settingsWindow.show()
     }
 
     // MARK: - ⇧⌘V — smart paste
@@ -835,20 +863,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
-        for title in ["⇧⌘V   Paste smart",
-                      "⌥⇧⌘C   Copy from screen",
-                      "⌃⌘V   Pull into this field",
-                      "⌃⇧⌘V   Fill this form",
-                      "⌃⌥C   Start / stop collecting",
-                      "⌃⌥V   Paste next from stack",
-                      "⌃⌥⇧V   Paste stack merged",
-                      "⌃⌥F   Search what you've copied",
-                      "⌃⌥H   Browse clipboard history"] {
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        // Built from the live bindings rather than hardcoded, so the menu stays
+        // correct after anything is rebound in settings.
+        for action in HotkeyAction.allCases {
+            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
+            bindingItems[action] = item
         }
         menu.addItem(.separator())
+
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
 
         stackItem = NSMenuItem(title: "Clear stack", action: #selector(clearStack), keyEquivalent: "")
         stackItem.target = self
@@ -914,6 +941,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        let status = hotkeys.registrationStatus
+        for action in HotkeyAction.allCases {
+            let shortcut = Bindings.binding(for: action).display
+            let unavailable = (status[action] ?? noErr) != noErr
+            bindingItems[action]?.title = "\(shortcut)   \(action.title)"
+                + (unavailable ? "   (unavailable)" : "")
+        }
+
         if stack.isCollecting {
             stackItem.title = "Collecting — \(stack.count) item(s) · Clear"
         } else if stack.isEmpty {

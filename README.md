@@ -20,6 +20,9 @@ literal. One copy, three correct outputs, and you never picked a format.
 
 ## What it does
 
+All of these are defaults — every one can be rebound from **Settings…** in the
+menu bar item.
+
 | Binding | Does |
 | --- | --- |
 | `⇧⌘V` | **Smart paste.** Reshapes the clipboard for the destination app. |
@@ -32,8 +35,15 @@ literal. One copy, three correct outputs, and you never picked a format.
 | `⌃⌥F` | **Search.** Ask for something you copied instead of scrolling for it. |
 | `⌃⌥H` | **Browse.** See everything that has been kept, and delete any of it. |
 
-**`⌘V` is never touched.** It stays byte-identical and instant, forever. No
-feature is worth adding latency to the most-pressed shortcut in computing.
+**`⌘V` is never touched**, and cannot be bound to anything. It stays
+byte-identical and instant, forever. No feature is worth adding latency to the
+most-pressed shortcut in computing.
+
+Rebinding is checked twice: against the other actions, so one shortcut cannot
+silently shadow another, and against the system, so a combination macOS or
+another app already owns is reported as unavailable rather than left as a dead
+key. Bindings without ⌘, ⌃, or ⌥ are refused outright — a global hotkey of ⇧A
+would swallow every capital A you type, everywhere.
 
 ### Notes on the less obvious ones
 
@@ -105,6 +115,8 @@ Then, from the menu bar item:
    paste itself, and for pull and form fill to see fields at all.
 3. **Screen Recording** — needed for copy-from-screen. macOS only applies this
    one on relaunch, so quit and reopen afterwards.
+4. **Settings…** (`⌘,`) — rebind any shortcut. Click one, press the new
+   combination, or Reset to put it back.
 
 ### Keep your permissions across rebuilds
 
@@ -172,6 +184,7 @@ Sources/Superclip/
 ├── Engine/
 │   ├── Hotkey.swift           Carbon hotkeys — chosen over NSEvent monitors
 │   │                          because Carbon *consumes* the keystroke
+│   ├── HotkeyBinding.swift    Bindings, key names, conflict detection
 │   ├── ClipboardMonitor.swift Polls changeCount; provenance + history
 │   ├── HistoryStore.swift     AES-GCM store, keychain key, retention
 │   ├── CopyStack.swift        Opt-in ordered collection, FIFO
@@ -196,6 +209,7 @@ Sources/Superclip/
     ├── PreviewPanel.swift     Non-activating floating preview
     ├── HistoryBrowser.swift   Browsable, filterable list of what is kept
     ├── QueryPanel.swift       Spotlight-style input bar
+    ├── SettingsWindow.swift   Rebinding, with a key recorder
     └── RegionSelector.swift   Drag-to-select overlay
 ```
 
@@ -216,6 +230,11 @@ fast mode is on by default, and the system prompts are frozen byte-for-byte so
 they cache server-side. Handwriting inverts all of that: it thinks, runs at high
 effort, and does not stream, because a confidently wrong transcription is worse
 than a slow one.
+
+**Recording a shortcut has to stand the others down.** Carbon consumes a
+registered hotkey before any local monitor can see it, so with the bindings live
+you cannot capture ⌃⌥V as a new shortcut — pressing it fires the paste instead.
+The recorder unregisters everything while capturing and re-registers afterwards.
 
 **Nothing that can block runs before the bindings are live.** Registering the
 hotkeys is the first thing that happens at launch, ahead of any keychain or disk
@@ -242,6 +261,7 @@ Honest accounting, because most of this has not run yet.
 | Retention / safety filter | ✅ | ✅ | ✅ |
 | Encrypted history store | ✅ | ✅ | ✅ |
 | History browser | ✅ | ✅ | ❌ |
+| Hotkey binding + conflicts | ✅ | ✅ | ❌ |
 | Copy stack | ✅ | ✅ | ❌ |
 | Screen OCR | ✅ | ✅ | ❌ |
 | Handwriting routing | ✅ | ✅ | ❌ |
