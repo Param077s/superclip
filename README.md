@@ -41,6 +41,14 @@ back empty or unsure, or when you ask for it with `⌘↩`. A column-gap heurist
 turns a screenshot of a table straight into tab-separated values with no model
 call at all.
 
+**Handwriting** is routed separately. When OCR finds nothing but the region
+clearly has marks on it — a scanned note, a photographed page, an annotated
+PDF — it goes to a reading pass that thinks, runs at high effort, and returns
+the words it is not sure of alongside the transcription. Those uncertain
+readings are shown in the panel header, never mixed into what gets copied, so
+you know which name or digit to check. This is the one place in the app where
+accuracy is allowed to cost latency.
+
 **Pull** inverts the forty-year-old model: the destination requests content
 rather than the source pushing it. It reads the focused field's accessibility
 role, placeholder and label, ranks your recent clips against it, and offers up
@@ -173,6 +181,8 @@ Honest accounting, because most of this has not run yet.
 | Retention / safety filter | ✅ | ✅ | ✅ |
 | Copy stack | ✅ | ✅ | ❌ |
 | Screen OCR | ✅ | ✅ | ❌ |
+| Handwriting routing | ✅ | ✅ | ❌ |
+| Handwriting transcription | ✅ | ❌ | ❌ |
 | Reading-order sorting | ✅ | ✅ (fuzzed) | ❌ |
 | Smart paste | ✅ | ❌ | ❌ |
 | Pull | ✅ | ❌ | ❌ |
@@ -193,6 +203,13 @@ Known unknowns, in the order they are likely to bite:
 - **Whether the accessibility write path ever succeeds** in practice, or whether
   everything falls through to the keystroke path. Both work; it is a speed
   difference.
+- **Handwriting detection is deliberately crude.** It measures how much of a
+  region differs from its own background, which cannot tell writing apart from a
+  photograph or a screenshot of icons. Those are routed to the reading pass and
+  come back empty, costing one wasted call. The opposite error — a small amount
+  of writing inside a large selection reading as blank — is the one that would
+  actually block you, so the blank verdict is offered rather than enforced:
+  `⌘↩` reads it anyway.
 
 `~/superclip-debug.log` traces every flow. The two lines worth watching first
 are `form: scanned N nodes, M writable field(s)` and `pull: field=… role=…`. If

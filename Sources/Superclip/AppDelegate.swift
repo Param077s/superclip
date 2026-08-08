@@ -178,13 +178,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         preview.onCycle = nil
 
         let ocr = TextRecognizer.recognize(image)
-        Log.write("ocr: \(ocr.text.count) chars, confidence=\(String(format: "%.2f", ocr.confidence)), tabular=\(ocr.looksTabular)")
+        let ink = InkAnalysis.classify(image: image, ocr: ocr)
+        Log.write("ocr: \(ocr.text.count) chars, confidence=\(String(format: "%.2f", ocr.confidence)), tabular=\(ocr.looksTabular), ink=\(ink.content.rawValue) (\(String(format: "%.3f", ink.inkCoverage)))")
 
         // On-device OCR is instant, free, and offline, so it always runs first
         // and its result is what the user sees. The model is only spent when
         // Vision came back empty or unsure — or when the user asks for it with
         // ⌘↩, which is the escape hatch for layouts the gap heuristic mangles.
         let canUseModel = Settings.apiKey != nil
+
+        // A region with no marks on it is not worth a model call. But a small
+        // amount of writing inside a large selection sits at the same level as
+        // compression noise and cannot be told apart from it, so this verdict is
+        // offered rather than enforced — ⌘↩ reads it anyway.
+        if ink.content == .blank {
+            preview.show(headline: "Copied from screen",
+                         subtitle: "nothing to read here",
+                         primaryAction: "Dismiss",
+                         secondaryAction: canUseModel ? "Read anyway" : nil,
+                         isStreaming: false)
+            preview.onPrimary = { [weak self] _ in self?.dismiss() }
+            preview.onSecondary = { [weak self] in self?.forceHandwritingRead() }
+            preview.showError("No text or writing found in that region.")
+            return
+        }
+
+        // Marks Vision could not resolve are, in practice, handwriting.
+        if ink.content == .handwritten && canUseModel {
+            preview.show(headline: "Copied from screen",
+                         subtitle: "reading handwriting…",
+                         primaryAction: "Copy",
+                         secondaryAction: nil)
+            runHandwritingRead()
+            return
+        }
 
         if ocr.isTrustworthy || !canUseModel {
             let subtitle: String
@@ -233,6 +260,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         }
+    }
+
+    /// Overrides a "blank" verdict at the user's request.
+    private func forceHandwritingRead() {
+        guard case .capture = flow, Settings.apiKey != nil else { return }
+        preview.onPrimary = { [weak self] text in self?.acceptCopy(text) }
+        preview.setSubtitle("reading handwriting…")
+        preview.setSecondaryAction(nil)
+        preview.setPrimaryAction("Copy")
+        preview.beginStreaming()
+        Log.write("handwriting: forced read over blank verdict")
+        runHandwritingRead()
+    }
+
+    /// The handwriting path does not stream, so the panel sits on its spinner
+    /// until the whole transcription lands. That is the right trade here: the
+    /// alternative is streaming text with no way to say which words are guesses.
+    private func runHandwritingRead() {
+        guard case .capture(let image) = flow else { return }
+        guard let png = ScreenCapture.pngData(from: image) else {
+            preview.showError("Could not encode the captured image.")
+            return
+        }
+
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let read = try await self.transformer.readHandwriting(png: png)
+                guard !Task.isCancelled else { return }
+                self.preview.finishStreaming()
+
+                guard !read.isEmpty else {
+                    self.preview.showError("Could not make out any writing in that region.")
+                    Log.write("handwriting: nothing legible")
+                    return
+                }
+
+                // What gets copied is the transcription and nothing else. The
+                // uncertain readings are surfaced in the header instead, so the
+                // user knows what to double-check without it polluting the clip.
+                self.preview.setText(read.text)
+                self.preview.setSubtitle(Self.handwritingSubtitle(for: read))
+                Log.write("handwriting: \(read.text.count) chars, \(read.uncertain.count) uncertain")
+            } catch is CancellationError {
+                // Cancelled by the user; the panel is already gone.
+            } catch {
+                if !Task.isCancelled {
+                    self.preview.showError(error.localizedDescription)
+                    Log.write("handwriting: failed — \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private static func handwritingSubtitle(for read: HandwritingRead) -> String {
+        guard !read.uncertain.isEmpty else { return "handwriting · read cleanly" }
+        let shown = read.uncertain.prefix(3).joined(separator: ", ")
+        let more = read.uncertain.count > 3 ? " +\(read.uncertain.count - 3) more" : ""
+        return "handwriting · check: \(shown)\(more)"
     }
 
     private func acceptCopy(_ text: String) {
