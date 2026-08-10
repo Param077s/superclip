@@ -326,4 +326,4 @@ settability check is too strict.
 
 ## License
 
-[MIT](LICENSE) © 2026 Param077s
+[MIT](LICENSE) © 2026 Paramjot Singh
