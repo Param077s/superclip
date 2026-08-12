@@ -10,6 +10,12 @@
     <string>com.param.superclip</string>
     <key>CFBundleExecutable</key>
     <string>Superclip</string>
+    <!-- The app has no Dock icon (LSUIElement), but this one still shows in
+         Finder, in alerts, and — the reason it matters — in the Accessibility
+         and Screen Recording lists in System Settings, where someone decides
+         whether to hand it their clipboard and their screen. -->
+    <key>CFBundleIconFile</key>
+    <string>Superclip</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
